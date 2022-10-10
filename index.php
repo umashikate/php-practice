@@ -1,76 +1,57 @@
 <?php
+require('../dbconnect.php');
+
 session_start();
-require('dbconnect.php');
 
-if (isset($_SESSION['id']) && $_SESSION['time'] + 3600 > time()) {
-	// ログインしている
-	$_SESSION['time'] = time();
-
-	$members = $db->prepare('SELECT * FROM members WHERE id=?');
-	$members->execute(array($_SESSION['id']));
-	$member = $members->fetch();
-} else {
-	// ログインしていない
-	header('Location: login.php');
-	exit();
-}
-
-// 投稿を記録する
 if (!empty($_POST)) {
-	if ($_POST['message'] != '') {
-		$message = $db->prepare('INSERT INTO posts SET member_id=?, message=?, reply_post_id=?, created=NOW()');
-		$message->execute(array(
-			$member['id'],
-			$_POST['message'],
-			$_POST['reply_post_id']
-		));
+	// エラー項目の確認
+	if ($_POST['name'] == '') {
+		$error['name'] = 'blank';
+	}
+	if ($_POST['email'] == '') {
+		$error['email'] = 'blank';
+	}
+	if (strlen($_POST['password']) < 4) {
+		$error['password'] = 'length';
+	}
+	if ($_POST['password'] == '') {
+		$error['password'] = 'blank';
+	}
+	$fileName = $_FILES['image']['name'];
+	if (!empty($fileName)) {
+		$ext = substr($fileName, -3);
+		if ($ext != 'jpg' && $ext != 'gif') {
+			$error['image'] = 'type';
+		}
+	}
 
-		header('Location: index.php'); exit();
+	// 重複アカウントのチェック
+	if (empty($error)) {
+		$member = $db->prepare('SELECT COUNT(*) AS cnt FROM members WHERE	email=?');
+		$member->execute(array($_POST['email']));
+		$record = $member->fetch();
+		if ($record['cnt'] > 0) {
+			$error['email'] = 'duplicate';
+		}
+	}
+
+	if (empty($error)) {
+		// 画像をアップロードする
+		$image = date('YmdHis') . $_FILES['image']['name'];
+		move_uploaded_file($_FILES['image']['tmp_name'], '../member_picture/' .$image);
+		$_SESSION['join'] = $_POST;
+		$_SESSION['join']['image'] = $image;
+		header('Location: check.php');
+		exit();
 	}
 }
-
-// 投稿を取得する
-$page = '';
-if (isset($page['page']))
-$page = $_REQUEST['page'];
-if ($page == '') {
-	$page = 1;
-}
-$page = max($page, 1);
-
-// 最終ページを取得する
-$counts = $db->query('SELECT COUNT(*) AS cnt FROM posts');
-$cnt = $counts->fetch();
-$maxPage = ceil($cnt['cnt'] / 5);
-$page = min($page, $maxPage);
-
-$start = ($page - 1) * 5;
-$start = max(0, $start);
-
-$posts = $db->prepare('SELECT m.name, m.picture, p.* FROM members m, posts p WHERE m.id=p.member_id ORDER BY p.created DESC LIMIT ?, 5');
-$posts->bindParam(1, $start, PDO::PARAM_INT);
-$posts->execute();
-
-// 返信の場合
-if (isset($_REQUEST['res'])) {
-	$response = $db->prepare('SELECT m.name, m.picture, p.* FROM members m, posts p WHERE m.id=p.member_id AND p.id=? ORDER BY p.created DESC');
-	$response->execute(array($_REQUEST['res']));
-
-	$table = $response->fetch();
-	$message = '@' . $table['name'] . ' ' . $table['message'];
-}
-
-// htmlspecialcharsのショートカット
-function h($value) {
-	return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
-}
-
-// 本文内のURLにリンクを設定します
-function makeLink($value) {
-	return mb_ereg_replace("(https?)(://[[:alnum:]\+\$\;\?\.%,!#~*/:@&=_-]+)", '<a href="\1\2">\1\2</a>' , $value);
+// 書き直し
+if (isset($_REQUEST['action']))
+if ($_REQUEST['action'] == 'rewrite') {
+	$_POST = $_SESSION['join'];
+	$error['rewrite'] = true;
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -79,82 +60,80 @@ function makeLink($value) {
 	<meta http-equiv="X-UA-Compatible" content="ie=edge">
 	<title>ひとこと掲示板</title>
 
-	<link rel="stylesheet" href="style.css" />
+	<link rel="stylesheet" href="../style.css" />
 </head>
 
 <body>
 <div id="wrap">
 	<div id="head">
-		<h1>ひとこと掲示板</h1>
+		<h1>会員登録</h1>
 	</div>
 	<div id="content">
-		<div style="text-align: right"><a href="logout.php">ログアウト</a></div>
-
-		<form action="" method="post">
+		<p>次のフォームに必要事項をご記入ください。</p>
+		<form action="" method="post" enctype="multipart/form-data">
 		<dl>
-        <dt>
-			<?php echo h($member['name']); ?>さん、メッセージをどうぞ
+		<dt>ニックネーム<span class="required">必須</span></dt>
+		<dd>
+			<input type="text" name="name" size="35" maxlength="255" value="<?php if (isset($_POST['name'])) echo htmlspecialchars($_POST['name'], ENT_QUOTES); ?>"/>
+			<?php 
+			if (isset($error['name']))
+			if ($error['name'] == 'blank'): 
+			?>
+				<p class="error">* ニックネームを入力してください</p>
+			<?php endif; ?>
+		</dd>
+		<dt>メールアドレス<span class="required">必須</span></dt>
+		<dd>
+			<input type="text" name="email" size="35" maxlength="255" value="<?php if (isset($_POST['email'])) echo htmlspecialchars($_POST['email'], ENT_QUOTES); ?>"/>
+			<?php 
+			if (isset($error['email']))
+			if ($error['email'] == 'blank'): 
+			?>
+				<p class="error">* メールアドレスを入力してください</p>
+			<?php endif; ?>
+			<?php 
+			if (isset($error['email']))
+			if ($error['email'] == 'duplicate'): 
+			?>
+				<p class="error">* 指定されたメールアドレスはすでに登録されています</p>
+			<?php endif; ?>
+		</dd>
+		<dt>パスワード<span class="required">必須</span></dt>
+		<dd>
+			<input type="password" name="password" size="10" maxlength="20" value="<?php if (isset($_POST['password'])) echo htmlspecialchars($_POST['password'], ENT_QUOTES); ?>"/>
+			<?php 
+			if (isset($error['password']))
+			if ($error['password'] == 'blank'): 
+			?>
+				<p class="error">* パスワードを入力してください</p>
+			<?php endif; ?>
+			<?php 
+			if (isset($error['password']))
+			if ($error['password'] == 'length'): ?>
+				<p class="error">* パスワードは4文字以上で入力してください</p>
+			<?php endif; ?>
+		</dd>
+		<dt>
+			写真など
 		</dt>
-        <dd>
-			<textarea name="message" cols="50" rows="5"><?php if (isset($message[''])) echo h($message); ?></textarea>
-			<input type="hidden" name="reply_post_id" value="<?php if (isset($_REQUEST['res'])) echo h($_REQUEST['res']); ?>" />
-        </dd>
+		<dd>
+			<input type="file" name="image" size="35" />
+			<?php 
+			if (isset($error['image']))
+			if ($error['image'] == 'type'): ?>
+				<p class="error">* 写真などは「.gif」または「.jpg」の画像を指定してください</p>
+			<?php endif; ?>
+			<?php if (!empty($error)): ?>
+				<p class="error">* 恐れ入りますが、画像を改めて指定してください</p>
+			<?php endif; ?>
+		</dd>
 		</dl>
 		<div>
-			<p>
-				<input type="submit" value="投稿する" />
-			</p>
+			<input type="submit" value="入力内容を確認する" />
 		</div>
 		</form>
-
-		<?php foreach ($posts as $post): ?>
-
-		<div class="msg">
-			<img src="member_picture/<?php echo h($post['picture']); ?>" width="48" height="48" alt="<?php echo h($post['name']); ?>" />
-			<p>
-				<?php echo makeLink(h($post['message'])); ?><span class="name">（<?php echo h($post['name']); ?>）</span>
-				[<a href="index.php?res=<?php echo h($post['id']); ?>">Re</a>]
-			</p>
-
-			<p class="day">
-				<a href="view.php?id=<?php echo h($post['id']); ?>"><?php echo h($post['created']); ?></a>
-
-				<?php if ($post['reply_post_id'] > 0): ?>
-
-				<a href="view.php?id=<?php echo h($post['reply_post_id']); ?>">返信元のメッセージ</a>
-
-                <?php endif; ?>
-				<?php if ($_SESSION['id'] == $post['member_id']):?>
-					[<a href="delete.php?id=<?php echo h($post['id']); ?>"style="color: #F33;">削除</a>]
-				<?php endif; ?>
-			</p>
-		</div>
-
-		<?php endforeach; ?>
-
-		<ul class="paging">
-			<?php if ($page > 1) { ?>
-			<li>
-				<a href="index.php?page=<?php print($page - 1); ?>">前のページへ</a>
-			</li>
-			<?php } else { ?>
-			<li>
-				前のページへ
-			</li>
-			<?php } ?>
-
-			<?php if ($page < $maxPage) { ?>
-			<li>
-				<a href="index.php?page=<?php print($page + 1); ?>">次のページへ</a>
-			</li>
-
-			<?php } else { ?>
-			<li>
-				次のページへ
-			</li>
-			<?php } ?>
-		</ul>
 	</div>
+
 </div>
 </body>
 </html>
